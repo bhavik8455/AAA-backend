@@ -12,8 +12,15 @@
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.6.4",
 		"@cloudflare/workers-types": "^4.20250214.0",
+		"drizzle-kit": "^0.30.4",
 		"typescript": "^5.5.2",
 		"vitest": "~2.1.9",
 		"wrangler": "^3.109.1"
+	},
+	"dependencies": {
+		"@libsql/client": "^0.14.0",
+		"@paralleldrive/cuid2": "^2.2.2",
+		"drizzle-orm": "^0.39.3",
+		"hono": "^4.7.1"
 	}
 }
