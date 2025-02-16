@@ -6,6 +6,6 @@ export default defineConfig({
   out: "./drizzle",
   dbCredentials: {
     url:
-      "file:D:/user/Downloads/Aditya/contributions/aaa-backend/.wrangler/state/v3/d1/miniflare-D1DatabaseObject/19a9a3ef716565e10b3d2ab5dd5590ee983cdda4ff019a77e484fb82dd97b797.sqlite",
+      "file:C:/Users/Solan/OneDrive/Desktop/AAA-backend/.wrangler/state/v3/d1/miniflare-D1DatabaseObject/fa14c453400d563bfbc46dd02094896114991e948b5a760fcc97d8c740b639e6.sqlite",
   },
 });

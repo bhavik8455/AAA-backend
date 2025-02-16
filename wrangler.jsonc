@@ -13,8 +13,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "aaa-backend",
-      "database_id": "52360fbc-d299-4267-9db6-28d5a1638924",
+      "database_name": "db",
+      "database_id": "ec561689-7e58-48d3-affc-cb195a05710e",
       "migrations_dir": "drizzle"
     }
   ]
