@@ -21,25 +21,52 @@ app.get("/student/getTasks", async (c) => {
   return c.json(studentTasks);
 });
 
-
 // Add Task for Teacher
 app.post("/teacher/addTask", async (c) => {
   const db = drizzle(c.env.DB);
   const body = await c.req.json();
 
-  const newTask = await db.insert(tasks).values({
+  const [newTask] = await db.insert(tasks).values({
     teacherSubjectId: body.teacherSubjectId,
     semester: body.semester,
     taskType: body.taskType,
     title: body.title,
-    dueDate: body.dueDate,
+    dueDate: new Date(body.dueDate),
     totalMarks: body.totalMarks,
+  }).returning({ id: tasks.id });
+
+  // Get all students from the specified semester and division
+  const studentsInClass = await db
+    .select({
+      id: students.id,
+    })
+    .from(students)
+    .where(
+      and(
+        eq(students.currentSemester, body.semester),
+        eq(students.division, body.division)
+      )
+    );
+
+  // Create pending submissions for all students
+  const submissionValues = studentsInClass.map(student => ({
+    taskId: newTask.id,
+    studentId: student.id,
+    submissionFilePath: '',
+    status: 'pending',
+  }));
+
+  // Bulk insert submissions
+  if (submissionValues.length > 0) {
+    await db.insert(submissions).values(submissionValues);
+  }
+
+  return c.json({
+    message: "Task added successfully and pending submissions created",
+    task: newTask,
+    submissionsCreated: submissionValues.length
   });
-
-  return c.json({ message: "Task added successfully", task: newTask });
-});
-
-export default app;
+}); export default app;
 
 
 // Get Student Dashboard
@@ -112,6 +139,7 @@ app.get("/student/tasks/:status", async (c) => {
     data: studentTasks
   });
 });
+
 // Generate Report for Teacher
 app.get("/teacher/generate-report/:teacherSubjectId", async (c) => {
   const db = drizzle(c.env.DB);
