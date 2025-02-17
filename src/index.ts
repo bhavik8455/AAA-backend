@@ -103,12 +103,18 @@ app.post("/student/submission/upload", async (c) => {
 
   const r2 = await c.env.R2.put(uuid, body["file"]);
 
-  await db.insert(submissions).values({
-    taskId: body["taskId"].toString(),
-    studentId: body["studentId"].toString(),
-    submissionFilePath: uuid,
-    status: "submitted",
-  });
+  await db.update(submissions)
+    .set({
+      submissionFilePath: uuid,
+      status: "submitted",
+      submissionDate: new Date()
+    })
+    .where(
+      and(
+        eq(submissions.taskId, body["taskId"].toString()),
+        eq(submissions.studentId, body["studentId"].toString())
+      )
+    );
 
   return c.json(r2);
 });
