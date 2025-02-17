@@ -17,6 +17,12 @@
       "database_id": "ec561689-7e58-48d3-affc-cb195a05710e",
       "migrations_dir": "drizzle"
     }
+  ],
+  "r2_buckets": [
+    {
+      "bucket_name": "aaa-backend",
+      "binding": "R2"
+    }
   ]
   /**
    * Smart Placement
