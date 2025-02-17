@@ -6,66 +6,8 @@ import { marks, students, subjects, submissions, tasks, teachers, teacherSubject
 
 const app = new Hono<{ Bindings: Env }>();
 
-// Get Tasks for Student
-app.get("/student/getTasks", async (c) => {
-  const db = drizzle(c.env.DB);
-
-  const studentTasks = await db
-    .select()
-    .from(tasks)
-    .innerJoin(students, eq(tasks.semester, students.currentSemester))
-    .fullJoin(submissions, eq(tasks.id, submissions.taskId))
-    .where(eq(students.id, "std_1"));
-
-  return c.json(studentTasks);
-});
-
-// Add Task for Teacher
-app.post("/teacher/addTask", async (c) => {
-  const db = drizzle(c.env.DB);
-  const body = await c.req.json();
-
-  const [newTask] = await db.insert(tasks).values({
-    teacherSubjectId: body.teacherSubjectId,
-    semester: body.semester,
-    taskType: body.taskType,
-    title: body.title,
-    dueDate: new Date(body.dueDate),
-    totalMarks: body.totalMarks,
-  }).returning({ id: tasks.id });
-
-  // Get all students from the specified semester and division
-  const studentsInClass = await db
-    .select({
-      id: students.id,
-    })
-    .from(students)
-    .where(
-      and(
-        eq(students.currentSemester, body.semester),
-        eq(students.division, body.division)
-      )
-    );
-
-  // Create pending submissions for all students
-  const submissionValues = studentsInClass.map(student => ({
-    taskId: newTask.id,
-    studentId: student.id,
-    submissionFilePath: '',
-    status: 'pending',
-  }));
-
-  // Bulk insert submissions
-  if (submissionValues.length > 0) {
-    await db.insert(submissions).values(submissionValues);
-  }
-
-  return c.json({
-    message: "Task added successfully and pending submissions created",
-    task: newTask,
-    submissionsCreated: submissionValues.length
-  });
-}); export default app;
+// STUDENT ROUTES
+// -------------
 
 // Get Student Dashboard
 app.get("/student/dashboard/:userId", async (c) => {
@@ -86,39 +28,21 @@ app.get("/student/dashboard/:userId", async (c) => {
   return c.json(studentDetails[0]);
 });
 
-app.post("/student/submission/upload", async (c) => {
+// Get Tasks for Student
+app.get("/student/getTasks", async (c) => {
   const db = drizzle(c.env.DB);
 
-  const uuid = crypto.randomUUID();
-  const body = await c.req.parseBody();
-  console.log(body);
+  const studentTasks = await db
+    .select()
+    .from(tasks)
+    .innerJoin(students, eq(tasks.semester, students.currentSemester))
+    .fullJoin(submissions, eq(tasks.id, submissions.taskId))
+    .where(eq(students.id, "std_1"));
 
-  const r2 = await c.env.R2.put(uuid, body["file"]);
-
-  await db.insert(submissions).values({
-    taskId: body["taskId"].toString(),
-    studentId: body["studentId"].toString(),
-    submissionFilePath: uuid,
-    status: "submitted",
-  });
-
-  return c.json(r2);
+  return c.json(studentTasks);
 });
 
-app.get("/student/file/:key", async (c) => {
-  const r2 = await c.env.R2.get(c.req.param("key"));
-  if (!r2) {
-    return c.json({ message: "File not found" }, 404);
-  }
-
-  return new Response(r2.body, {
-    headers: {
-      "Content-Type": r2.httpMetadata?.contentType || "application/pdf",
-    },
-  });
-});
-
-// Get Tasks for Student based on the task status
+// Get Tasks for Student based on status
 app.get("/student/tasks/:status", async (c) => {
   const db = drizzle(c.env.DB);
   const status = c.req.param("status");
@@ -169,32 +93,118 @@ app.get("/student/tasks/:status", async (c) => {
   });
 });
 
-// Generate Report for Teacher
-app.get("/teacher/generate-report/:teacherSubjectId", async (c) => {
+// Upload Student Submissions
+app.post("/student/submission/upload", async (c) => {
   const db = drizzle(c.env.DB);
-  const teacherSubjectId = c.req.param("teacherSubjectId");
 
-  const report = await db
+  const uuid = crypto.randomUUID();
+  const body = await c.req.parseBody();
+  console.log(body);
+
+  const r2 = await c.env.R2.put(uuid, body["file"]);
+
+  await db.insert(submissions).values({
+    taskId: body["taskId"].toString(),
+    studentId: body["studentId"].toString(),
+    submissionFilePath: uuid,
+    status: "submitted",
+  });
+
+  return c.json(r2);
+});
+
+// Get Student Submissions
+app.get("/student/file/:key", async (c) => {
+  const r2 = await c.env.R2.get(c.req.param("key"));
+  if (!r2) {
+    return c.json({ message: "File not found" }, 404);
+  }
+
+  return new Response(r2.body, {
+    headers: {
+      "Content-Type": r2.httpMetadata?.contentType || "application/pdf",
+    },
+  });
+});
+
+// TEACHER ROUTES
+// -------------
+
+// Add Task for Teacher
+app.post("/teacher/addTask", async (c) => {
+  const db = drizzle(c.env.DB);
+  const body = await c.req.json();
+
+  const [newTask] = await db.insert(tasks).values({
+    teacherSubjectId: body.teacherSubjectId,
+    semester: body.semester,
+    taskType: body.taskType,
+    title: body.title,
+    dueDate: new Date(body.dueDate),
+    totalMarks: body.totalMarks,
+  }).returning({ id: tasks.id });
+
+  const studentsInClass = await db
+    .select({
+      id: students.id,
+    })
+    .from(students)
+    .where(
+      and(
+        eq(students.currentSemester, body.semester),
+        eq(students.division, body.division)
+      )
+    );
+
+  const submissionValues = studentsInClass.map(student => ({
+    taskId: newTask.id,
+    studentId: student.id,
+    submissionFilePath: '',
+    status: 'pending',
+  }));
+
+  if (submissionValues.length > 0) {
+    await db.insert(submissions).values(submissionValues);
+  }
+
+  return c.json({
+    message: "Task added successfully and pending submissions created",
+    task: newTask,
+    submissionsCreated: submissionValues.length
+  });
+});
+
+// Get Teacher Dashboard
+app.get("/teacher/dashboard", async (c) => {
+  const db = drizzle(c.env.DB);
+  const { semester, subjectId, division, taskId } = c.req.query();
+
+  const dashboardData = await db
     .select({
       studentName: users.fullName,
-      rollNumber: students.rollNumber,
-      taskTitle: tasks.title,
-      taskType: tasks.taskType,
-      submissionDate: submissions.submissionDate,
-      questionNumber: marks.questionNumber,
-      marksObtained: marks.marksObtained,
-      totalMarks: tasks.totalMarks,
-      comments: marks.comments,
+      totalMarks: sql<number>`COALESCE(SUM(DISTINCT ${marks.marksObtained}), 0)`,
     })
-    .from(tasks)
-    .leftJoin(submissions, eq(tasks.id, submissions.taskId))
-    .leftJoin(marks, eq(submissions.id, marks.submissionId))
-    .leftJoin(students, eq(submissions.studentId, students.id))
-    .leftJoin(users, eq(students.userId, users.id))
-    .where(eq(tasks.teacherSubjectId, teacherSubjectId))
-    .orderBy(users.fullName, tasks.title, marks.questionNumber);
+    .from(students)
+    .innerJoin(users, eq(students.userId, users.id))
+    .leftJoin(submissions, eq(submissions.studentId, students.id))
+    .leftJoin(marks, eq(marks.submissionId, submissions.id))
+    .where(
+      and(
+        eq(students.currentSemester, parseInt(semester)),
+        eq(students.division, division),
+        eq(submissions.taskId, taskId),
+      ),
+    )
+    .groupBy(users.fullName)
+    .orderBy(users.fullName);
 
-  return c.json(report);
+  return c.json({
+    success: true,
+    data: dashboardData.map(student => ({
+      ...student,
+      totalMarks: Number(student.totalMarks),
+    })),
+  });
 });
 
 // Get Students List for Teacher
@@ -243,35 +253,32 @@ app.get("/teacher/students-list", async (c) => {
   });
 });
 
-// Get Teacher Dashboard
-app.get("/teacher/dashboard", async (c) => {
+// Generate Report for Teacher
+app.get("/teacher/generate-report/:teacherSubjectId", async (c) => {
   const db = drizzle(c.env.DB);
-  const { semester, subjectId, division, taskId } = c.req.query();
+  const teacherSubjectId = c.req.param("teacherSubjectId");
 
-  const dashboardData = await db
+  const report = await db
     .select({
       studentName: users.fullName,
-      totalMarks: sql<number>`COALESCE(SUM(DISTINCT ${marks.marksObtained}), 0)`,
+      rollNumber: students.rollNumber,
+      taskTitle: tasks.title,
+      taskType: tasks.taskType,
+      submissionDate: submissions.submissionDate,
+      questionNumber: marks.questionNumber,
+      marksObtained: marks.marksObtained,
+      totalMarks: tasks.totalMarks,
+      comments: marks.comments,
     })
-    .from(students)
-    .innerJoin(users, eq(students.userId, users.id))
-    .leftJoin(submissions, eq(submissions.studentId, students.id))
-    .leftJoin(marks, eq(marks.submissionId, submissions.id))
-    .where(
-      and(
-        eq(students.currentSemester, parseInt(semester)),
-        eq(students.division, division),
-        eq(submissions.taskId, taskId),
-      ),
-    )
-    .groupBy(users.fullName)
-    .orderBy(users.fullName);
+    .from(tasks)
+    .leftJoin(submissions, eq(tasks.id, submissions.taskId))
+    .leftJoin(marks, eq(submissions.id, marks.submissionId))
+    .leftJoin(students, eq(submissions.studentId, students.id))
+    .leftJoin(users, eq(students.userId, users.id))
+    .where(eq(tasks.teacherSubjectId, teacherSubjectId))
+    .orderBy(users.fullName, tasks.title, marks.questionNumber);
 
-  return c.json({
-    success: true,
-    data: dashboardData.map(student => ({
-      ...student,
-      totalMarks: Number(student.totalMarks),
-    })),
-  });
+  return c.json(report);
 });
+
+export default app;
