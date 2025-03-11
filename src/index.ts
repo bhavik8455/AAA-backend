@@ -3,8 +3,18 @@ import { Hono } from "hono";
 import { insertSeedData } from "../data";
 import drizzle from "../src/database";
 import { marks, students, subjects, submissions, tasks, teachers, teacherSubjects, users } from "./database/schema";
-
+import { cors } from 'hono/cors'
 const app = new Hono<{ Bindings: Env }>();
+
+// Add CORD middleware
+app.use('/*', cors({
+  origin: ['http://localhost:3000'],
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+  exposeHeaders: ['Content-Length'],
+  maxAge: 600,
+  credentials: true
+}));
 
 // STUDENT ROUTES
 // -------------
@@ -212,6 +222,47 @@ app.get("/teacher/dashboard", async (c) => {
     })),
   });
 });
+
+
+// Get Teacher Tasks
+app.get("/teacher/tasks", async (c) => {
+  const db = drizzle(c.env.DB);
+  const { semester, subjectId, division } = c.req.query();
+
+  const tasksList = await db
+    .select({
+      taskId: tasks.id,
+      title: tasks.title,
+      taskType: tasks.taskType,
+      dueDate: tasks.dueDate,
+      totalMarks: tasks.totalMarks,
+      createdAt: tasks.createdAt
+    })
+    .from(tasks)
+    .innerJoin(
+      teacherSubjects,
+      eq(tasks.teacherSubjectId, teacherSubjects.id)
+    )
+    .where(
+      and(
+        eq(tasks.semester, parseInt(semester)),
+        eq(teacherSubjects.subjectId, subjectId),
+        eq(teacherSubjects.division, division)
+      )
+    )
+    .orderBy(tasks.createdAt);
+
+  return c.json({
+    success: true,
+    data: tasksList
+  });
+});
+
+
+
+
+
+
 
 // Get Students List for Teacher
 app.get("/teacher/students-list", async (c) => {
