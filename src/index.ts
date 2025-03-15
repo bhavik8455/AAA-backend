@@ -1,6 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { insertSeedData } from "../data";
 import drizzle from "../src/database";
 import { marks, students, subjects, submissions, tasks, teachers, teacherSubjects, users } from "./database/schema";
 import { cors } from 'hono/cors'
@@ -143,6 +142,60 @@ app.get("/student/file/:key", async (c) => {
   });
 });
 
+
+
+
+
+// Get Submission ID by File Path
+app.get("/submission/id-by-filepath/:filePath", async (c) => {
+  const db = drizzle(c.env.DB);
+  const filePath = c.req.param("filePath");
+
+  if (!filePath) {
+    return c.json({ 
+      success: false, 
+      message: "File path is required" 
+    }, 400);
+  }
+
+  try {
+    const submission = await db
+      .select({
+        id: submissions.id,
+        taskId: submissions.taskId,
+        studentId: submissions.studentId,
+        status: submissions.status,
+        submissionDate: submissions.submissionDate
+      })
+      .from(submissions)
+      .where(eq(submissions.submissionFilePath, filePath))
+      .limit(1);
+
+    if (!submission.length) {
+      return c.json({ 
+        success: false, 
+        message: "No submission found with the provided file path" 
+      }, 404);
+    }
+
+    return c.json({
+      success: true,
+      data: submission[0]
+    });
+  } catch (error: any) {
+    console.error("Error fetching submission:", error);
+    return c.json({
+      success: false,
+      message: "Failed to fetch submission",
+      error: error.message
+    }, 500);
+  }
+});
+
+
+
+
+
 // TEACHER ROUTES
 // -------------
 
@@ -278,7 +331,7 @@ app.get("/teacher/students-list", async (c) => {
         submissionDate: submissions.submissionDate,
         filePath: submissions.submissionFilePath,
       },
-      totalMarks: sql<number>`COALESCE(SUM(DISTINCT ${marks.marksObtained}), 0)`,
+      totalMarks: sql<number>`COALESCE(SUM(${marks.marksObtained}), 0)`,
       comments: sql`GROUP_CONCAT(DISTINCT ${marks.comments})`,
     })
     .from(students)
@@ -337,5 +390,68 @@ app.get("/teacher/generate-report/:teacherSubjectId", async (c) => {
 
   return c.json(report);
 });
+
+
+
+
+
+app.post("/teacher/save-marks", async (c) => {
+  const db = drizzle(c.env.DB);
+  const body = await c.req.json();
+  const marksArray = body.marks;
+
+  try {
+    // Validate that all submission IDs exist
+    for (const mark of marksArray) {
+      // Check if submission exists
+      const submission = await db.select()
+        .from(submissions)
+        .where(eq(submissions.id, mark.submissionId))
+        .limit(1);
+
+      if (!submission.length) {
+        return c.json({
+          success: false,
+          message: `Submission with ID ${mark.submissionId} does not exist`
+        }, 400);
+      }
+
+      // Check if teacher exists
+      const teacher = await db.select()
+        .from(teachers)
+        .where(eq(teachers.id, mark.markedBy))
+        .limit(1);
+
+      if (!teacher.length) {
+        return c.json({
+          success: false,
+          message: `Teacher with ID ${mark.markedBy} does not exist`
+        }, 400);
+      }
+    }
+    // First, delete any existing marks for this submission
+    if (marksArray.length > 0) {
+      const submissionId = marksArray[0].submissionId;
+      await db.delete(marks).where(eq(marks.submissionId, submissionId));
+    }
+
+
+    // Insert new marks
+    const insertedMarks = await db.insert(marks).values(marksArray).returning();
+    return c.json({
+      success: true,
+      message: "Marks saved successfully",
+      data: insertedMarks
+    });
+  } catch (error: any) {
+    console.error("Error saving marks:", error);
+    return c.json({
+      success: false,
+      message: "Failed to save marks",
+      error: error.message
+    }, 500);
+  }
+});
+
 
 export default app;
