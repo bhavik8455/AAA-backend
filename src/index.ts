@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import drizzle from "../src/database";
 import { marks, students, subjects, submissions, tasks, teachers, teacherSubjects, users } from "./database/schema";
 import { cors } from 'hono/cors'
+import { compare } from 'bcrypt';
 const app = new Hono<{ Bindings: Env }>();
 
 // Add CORD middleware
@@ -144,17 +145,15 @@ app.get("/student/file/:key", async (c) => {
 
 
 
-
-
 // Get Submission ID by File Path
 app.get("/submission/id-by-filepath/:filePath", async (c) => {
   const db = drizzle(c.env.DB);
   const filePath = c.req.param("filePath");
 
   if (!filePath) {
-    return c.json({ 
-      success: false, 
-      message: "File path is required" 
+    return c.json({
+      success: false,
+      message: "File path is required"
     }, 400);
   }
 
@@ -172,9 +171,9 @@ app.get("/submission/id-by-filepath/:filePath", async (c) => {
       .limit(1);
 
     if (!submission.length) {
-      return c.json({ 
-        success: false, 
-        message: "No submission found with the provided file path" 
+      return c.json({
+        success: false,
+        message: "No submission found with the provided file path"
       }, 404);
     }
 
@@ -191,8 +190,6 @@ app.get("/submission/id-by-filepath/:filePath", async (c) => {
     }, 500);
   }
 });
-
-
 
 
 
@@ -277,6 +274,7 @@ app.get("/teacher/dashboard", async (c) => {
 });
 
 
+
 // Get Teacher Tasks
 app.get("/teacher/tasks", async (c) => {
   const db = drizzle(c.env.DB);
@@ -310,8 +308,6 @@ app.get("/teacher/tasks", async (c) => {
     data: tasksList
   });
 });
-
-
 
 
 
@@ -393,8 +389,6 @@ app.get("/teacher/generate-report/:teacherSubjectId", async (c) => {
 
 
 
-
-
 app.post("/teacher/save-marks", async (c) => {
   const db = drizzle(c.env.DB);
   const body = await c.req.json();
@@ -453,5 +447,115 @@ app.post("/teacher/save-marks", async (c) => {
   }
 });
 
+
+
+// Add this login route to your index.ts file
+app.post("/auth/login", async (c) => {
+  const db = drizzle(c.env.DB);
+  const { email, password, role } = await c.req.json();
+
+  // Validate required fields
+  if (!email || !password || !role) {
+    return c.json({
+      success: false,
+      message: "Email, password and role are required"
+    }, 400);
+  }
+
+  try {
+    // Find user by email
+    const userResult = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+
+    if (!userResult.length) {
+      return c.json({
+        success: false,
+        message: "Invalid credentials"
+      }, 401);
+    }
+
+    const user = userResult[0];
+
+    // Verify role matches
+    if (user.role !== role) {
+      return c.json({
+        success: false,
+        message: "Invalid role for this user"
+      }, 403);
+    }
+
+    // Verify password
+    const passwordMatch = (password === user.passwordHash);
+    if (!passwordMatch) {
+      return c.json({
+        success: false,
+        message: "Invalid credentials"
+      }, 401);
+    }
+
+    // Get additional user details based on role
+    let additionalDetails = null;
+    let teacherSubjectsData = null;
+    
+    if (role === 'student') {
+      const studentDetails = await db
+        .select()
+        .from(students)
+        .where(eq(students.userId, user.id))
+        .limit(1);
+
+      additionalDetails = studentDetails[0] || null;
+    } else if (role === 'teacher') {
+      const teacherDetails = await db
+        .select()
+        .from(teachers)
+        .where(eq(teachers.userId, user.id))
+        .limit(1);
+
+      additionalDetails = teacherDetails[0] || null;
+      
+      // Fetch teacher's subjects if teacher was found
+      if (additionalDetails) {
+        teacherSubjectsData = await db
+          .select({
+            id: teacherSubjects.id,
+            subjectId: teacherSubjects.subjectId,
+            division: teacherSubjects.division,
+            academicYear: teacherSubjects.academicYear,
+            subjectName: subjects.subjectName,
+            subjectCode: subjects.subjectCode,
+            semester: subjects.semester,
+            year: subjects.year
+          })
+          .from(teacherSubjects)
+          .innerJoin(subjects, eq(teacherSubjects.subjectId, subjects.id))
+          .where(eq(teacherSubjects.teacherId, additionalDetails.id));
+      }
+    }
+
+    // Return user data without password hash
+    const { passwordHash, ...userData } = user;
+
+    return c.json({
+      success: true,
+      message: "Login successful",
+      data: {
+        user: userData,
+        [role]: additionalDetails,
+        teacherSubjects: role === 'teacher' ? teacherSubjectsData : null
+      }
+    });
+  } catch (error: any) {
+    console.error("Login error:", error);
+    return c.json({
+      success: false,
+      message: "An error occurred during login",
+      error: error.message
+    }, 500);
+  }
+});
 
 export default app;
