@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import drizzle from "../src/database";
 import { marks, students, subjects, submissions, tasks, teachers, teacherSubjects, users } from "./database/schema";
 import { cors } from 'hono/cors'
-import { compare } from 'bcrypt';
+
 const app = new Hono<{ Bindings: Env }>();
 
 // Add CORD middleware
