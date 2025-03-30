@@ -311,8 +311,6 @@ app.get("/teacher/tasks", async (c) => {
 
 
 
-
-
 // Get Students List for Teacher
 app.get("/teacher/students-list", async (c) => {
   const db = drizzle(c.env.DB);
@@ -360,9 +358,17 @@ app.get("/teacher/students-list", async (c) => {
 });
 
 // Generate Report for Teacher
-app.get("/teacher/generate-report/:teacherSubjectId", async (c) => {
+app.get("/teacher/generate-report/:taskid", async (c) => {
   const db = drizzle(c.env.DB);
-  const teacherSubjectId = c.req.param("teacherSubjectId");
+  const taskId = c.req.param("taskid");
+
+  const task = await db
+    .select({
+      teacherSubjectId: tasks.teacherSubjectId
+    })
+    .from(tasks)
+    .where(eq(tasks.id, taskId))
+    .limit(1);
 
   const report = await db
     .select({
@@ -381,12 +387,11 @@ app.get("/teacher/generate-report/:teacherSubjectId", async (c) => {
     .leftJoin(marks, eq(submissions.id, marks.submissionId))
     .leftJoin(students, eq(submissions.studentId, students.id))
     .leftJoin(users, eq(students.userId, users.id))
-    .where(eq(tasks.teacherSubjectId, teacherSubjectId))
+    .where(eq(tasks.teacherSubjectId, task[0].teacherSubjectId))
     .orderBy(users.fullName, tasks.title, marks.questionNumber);
 
   return c.json(report);
 });
-
 
 
 app.post("/teacher/save-marks", async (c) => {
@@ -499,7 +504,7 @@ app.post("/auth/login", async (c) => {
     // Get additional user details based on role
     let additionalDetails = null;
     let teacherSubjectsData = null;
-    
+
     if (role === 'student') {
       const studentDetails = await db
         .select()
@@ -516,7 +521,7 @@ app.post("/auth/login", async (c) => {
         .limit(1);
 
       additionalDetails = teacherDetails[0] || null;
-      
+
       // Fetch teacher's subjects if teacher was found
       if (additionalDetails) {
         teacherSubjectsData = await db
@@ -553,6 +558,57 @@ app.post("/auth/login", async (c) => {
     return c.json({
       success: false,
       message: "An error occurred during login",
+      error: error.message
+    }, 500);
+  }
+});
+
+// Get Task IDs by Semester, Subject, and Division
+app.get("/tasks/by-filters", async (c) => {
+  const db = drizzle(c.env.DB);
+  const { semester, subjectId, division } = c.req.query();
+
+  // Validate required parameters
+  if (!semester || !subjectId || !division) {
+    return c.json({
+      success: false,
+      message: "Semester, subjectId, and division are required query parameters"
+    }, 400);
+  }
+
+  try {
+    const tasksList = await db
+      .select({
+        taskId: tasks.id,
+        title: tasks.title,
+        taskType: tasks.taskType,
+        dueDate: tasks.dueDate,
+        totalMarks: tasks.totalMarks,
+        createdAt: tasks.createdAt
+      })
+      .from(tasks)
+      .innerJoin(
+        teacherSubjects,
+        eq(tasks.teacherSubjectId, teacherSubjects.id)
+      )
+      .where(
+        and(
+          eq(tasks.semester, parseInt(semester)),
+          eq(teacherSubjects.subjectId, subjectId),
+          eq(teacherSubjects.division, division)
+        )
+      )
+      .orderBy(tasks.createdAt);
+
+    return c.json({
+      success: true,
+      data: tasksList
+    });
+  } catch (error: any) {
+    console.error("Error fetching tasks:", error);
+    return c.json({
+      success: false,
+      message: "Failed to fetch tasks",
       error: error.message
     }, 500);
   }
