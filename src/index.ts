@@ -357,41 +357,62 @@ app.get("/teacher/students-list", async (c) => {
   });
 });
 
-// Generate Report for Teacher
 app.get("/teacher/generate-report/:taskid", async (c) => {
   const db = drizzle(c.env.DB);
   const taskId = c.req.param("taskid");
 
-  const task = await db
-    .select({
-      teacherSubjectId: tasks.teacherSubjectId
-    })
-    .from(tasks)
-    .where(eq(tasks.id, taskId))
-    .limit(1);
+  try {
+    // First, check if the task exists
+    const task = await db
+      .select({
+        id: tasks.id,
+        teacherSubjectId: tasks.teacherSubjectId
+      })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+      .limit(1);
 
-  const report = await db
-    .select({
-      studentName: users.fullName,
-      rollNumber: students.rollNumber,
-      taskTitle: tasks.title,
-      taskType: tasks.taskType,
-      submissionDate: submissions.submissionDate,
-      questionNumber: marks.questionNumber,
-      marksObtained: marks.marksObtained,
-      totalMarks: tasks.totalMarks,
-      comments: marks.comments,
-    })
-    .from(tasks)
-    .leftJoin(submissions, eq(tasks.id, submissions.taskId))
-    .leftJoin(marks, eq(submissions.id, marks.submissionId))
-    .leftJoin(students, eq(submissions.studentId, students.id))
-    .leftJoin(users, eq(students.userId, users.id))
-    .where(eq(tasks.teacherSubjectId, task[0].teacherSubjectId))
-    .orderBy(users.fullName, tasks.title, marks.questionNumber);
+    if (!task.length) {
+      return c.json({
+        success: false,
+        message: "Task not found"
+      }, 404);
+    }
 
-  return c.json(report);
+    const report = await db
+      .select({
+        studentName: users.fullName,
+        rollNumber: students.rollNumber,
+        taskTitle: tasks.title,
+        taskType: tasks.taskType,
+        submissionDate: submissions.submissionDate,
+        questionNumber: marks.questionNumber,
+        marksObtained: marks.marksObtained,
+        totalMarks: tasks.totalMarks,
+        comments: marks.comments,
+      })
+      .from(tasks)
+      .leftJoin(submissions, eq(tasks.id, submissions.taskId))
+      .leftJoin(marks, eq(submissions.id, marks.submissionId))
+      .leftJoin(students, eq(submissions.studentId, students.id))
+      .leftJoin(users, eq(students.userId, users.id))
+      .where(eq(tasks.id, taskId)) // Filter by the specific task ID instead of teacherSubjectId
+      .orderBy(users.fullName, tasks.title, marks.questionNumber);
+
+    return c.json({
+      success: true,
+      data: report
+    });
+  } catch (error: any) {
+    console.error("Error generating report:", error);
+    return c.json({
+      success: false,
+      message: "Failed to generate report",
+      error: error.message
+    }, 500);
+  }
 });
+
 
 
 app.post("/teacher/save-marks", async (c) => {
