@@ -240,29 +240,33 @@ app.post("/teacher/addTask", async (c) => {
   });
 });
 
-// Get Teacher Dashboard
 app.get("/teacher/dashboard", async (c) => {
   const db = drizzle(c.env.DB);
   const { semester, subjectId, division, taskId } = c.req.query();
 
   const dashboardData = await db
     .select({
+      studentId: students.id,
+      rollNumber: students.rollNumber,
       studentName: users.fullName,
-      totalMarks: sql<number>`COALESCE(SUM(DISTINCT ${marks.marksObtained}), 0)`,
+      totalMarks: sql<number>`COALESCE(SUM(${marks.marksObtained}), 0)`,
     })
     .from(students)
     .innerJoin(users, eq(students.userId, users.id))
     .leftJoin(submissions, eq(submissions.studentId, students.id))
+    .leftJoin(tasks, eq(submissions.taskId, tasks.id))
+    .leftJoin(teacherSubjects, eq(tasks.teacherSubjectId, teacherSubjects.id))
     .leftJoin(marks, eq(marks.submissionId, submissions.id))
     .where(
       and(
         eq(students.currentSemester, parseInt(semester)),
         eq(students.division, division),
         eq(submissions.taskId, taskId),
+        eq(teacherSubjects.subjectId, subjectId)
       ),
     )
-    .groupBy(users.fullName)
-    .orderBy(users.fullName);
+    .groupBy(students.id, students.rollNumber, users.fullName)
+    .orderBy(students.rollNumber);
 
   return c.json({
     success: true,
