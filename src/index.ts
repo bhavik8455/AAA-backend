@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import drizzle from "../src/database";
 import { marks, students, subjects, submissions, tasks, teachers, teacherSubjects, users } from "./database/schema";
 import { cors } from 'hono/cors'
+import { createId } from "@paralleldrive/cuid2";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -201,43 +202,78 @@ app.post("/teacher/addTask", async (c) => {
   const db = drizzle(c.env.DB);
   const body = await c.req.json();
 
-  const [newTask] = await db.insert(tasks).values({
-    teacherSubjectId: body.teacherSubjectId,
-    semester: body.semester,
-    taskType: body.taskType,
-    title: body.title,
-    dueDate: new Date(body.dueDate),
-    totalMarks: body.totalMarks,
-  }).returning({ id: tasks.id });
+  try {
+    // Validate required fields
+    if (!body.teacherSubjectId || !body.semester || !body.taskType || 
+        !body.title || !body.dueDate || !body.totalMarks || !body.division) {
+      return c.json({
+        success: false,
+        message: "Missing required fields"
+      }, 400);
+    }
 
-  const studentsInClass = await db
-    .select({
-      id: students.id,
-    })
-    .from(students)
-    .where(
-      and(
-        eq(students.currentSemester, body.semester),
-        eq(students.division, body.division)
-      )
-    );
+    // Create the task
+    const [newTask] = await db.insert(tasks).values({
+      teacherSubjectId: body.teacherSubjectId,
+      semester: body.semester,
+      taskType: body.taskType,
+      title: body.title,
+      dueDate: new Date(body.dueDate),
+      totalMarks: body.totalMarks,
+    }).returning({ id: tasks.id });
 
-  const submissionValues = studentsInClass.map(student => ({
-    taskId: newTask.id,
-    studentId: student.id,
-    submissionFilePath: '',
-    status: 'pending',
-  }));
+    console.log({ id: newTask.id });
 
-  if (submissionValues.length > 0) {
-    await db.insert(submissions).values(submissionValues);
+    // Find students in the class
+    const studentsInClass = await db
+      .select({
+        id: students.id,
+      })
+      .from(students)
+      .where(
+        and(
+          eq(students.currentSemester, body.semester),
+          eq(students.division, body.division)
+        )
+      );
+
+    console.log(`Found ${studentsInClass.length} students in the class`);
+
+    // Create submissions for each student - but in smaller batches
+    const BATCH_SIZE = 20; // Smaller batch size to avoid SQLite variable limit
+    let submissionsCreated = 0;
+
+    // Process students in batches
+    for (let i = 0; i < studentsInClass.length; i += BATCH_SIZE) {
+      const batch = studentsInClass.slice(i, i + BATCH_SIZE);
+      console.log(`Processing batch ${i/BATCH_SIZE + 1} with ${batch.length} students`);
+      
+      // Process each student individually to be extra safe
+      for (const student of batch) {
+        await db.insert(submissions).values({
+          taskId: newTask.id,
+          studentId: student.id,
+          submissionFilePath: '',
+          status: 'pending',
+        });
+        submissionsCreated++;
+      }
+    }
+
+    return c.json({
+      success: true,
+      message: "Task added successfully and pending submissions created",
+      task: newTask,
+      submissionsCreated
+    });
+  } catch (error: any) {
+    console.error("Error creating task:", error);
+    return c.json({
+      success: false,
+      message: "Failed to create task",
+      error: error.message
+    }, 500);
   }
-
-  return c.json({
-    message: "Task added successfully and pending submissions created",
-    task: newTask,
-    submissionsCreated: submissionValues.length
-  });
 });
 
 app.get("/teacher/dashboard", async (c) => {
@@ -638,5 +674,375 @@ app.get("/tasks/by-filters", async (c) => {
     }, 500);
   }
 });
+
+
+
+// Bulk Student Registration from CSV
+app.post("/auth/register-students-csv", async (c) => {
+  const db = drizzle(c.env.DB);
+
+  try {
+    // Parse the multipart form data
+    const formData = await c.req.formData();
+    const csvFile = formData.get("file") as File;
+
+    if (!csvFile) {
+      return c.json({
+        success: false,
+        message: "CSV file is required"
+      }, 400);
+    }
+
+    // Read and parse the CSV file
+    const csvText = await csvFile.text();
+    const rows = csvText.split("\n").filter(row => row.trim());
+
+    // Assuming the first row is headers
+    const headers = rows[0].split(",").map(header => header.trim());
+
+    // Expected headers: pid, rollNumber, email, contactNumber, fullName
+    const requiredHeaders = ["pid", "rollNumber", "email", "contactNumber", "fullName"];
+    const missingHeaders = requiredHeaders.filter(h => !headers.includes(h));
+
+    if (missingHeaders.length > 0) {
+      return c.json({
+        success: false,
+        message: `CSV is missing required headers: ${missingHeaders.join(", ")}`
+      }, 400);
+    }
+
+    // Process each row (skipping header)
+    const results = {
+      success: 0,
+      failed: 0,
+      errors: [] as { row: number; message: string }[]
+    };
+
+    for (let i = 1; i < rows.length; i++) {
+      const rowData = rows[i].split(",").map(cell => cell.trim());
+
+      // Create an object with the CSV data
+      const studentData: Record<string, string> = {};
+      headers.forEach((header, index) => {
+        studentData[header] = rowData[index];
+      });
+
+      // Validate required fields
+      let { pid, rollNumber, email, contactNumber, fullName } = studentData;
+
+      // Convert email to lowercase
+      email = email ? email.toLowerCase() : '';
+
+      if (!pid || !rollNumber || !email || !contactNumber || !fullName) {
+        results.failed++;
+        results.errors.push({
+          row: i,
+          message: "Missing required fields"
+        });
+        continue;
+      }
+
+      try {
+        // Check if email already exists
+        const existingUser = await db
+          .select()
+          .from(users)
+          .where(eq(users.email, email))
+          .limit(1);
+
+        if (existingUser.length > 0) {
+          results.failed++;
+          results.errors.push({
+            row: i,
+            message: `Email ${email} already registered`
+          });
+          continue;
+        }
+
+        // Check if PID already exists
+        const existingPid = await db
+          .select()
+          .from(students)
+          .where(eq(students.pid, pid))
+          .limit(1);
+
+        if (existingPid.length > 0) {
+          results.failed++;
+          results.errors.push({
+            row: i,
+            message: `PID ${pid} already registered`
+          });
+          continue;
+        }
+
+
+
+        // Generate password hash (first 8 digits of mobile number)
+        const passwordHash = contactNumber.substring(0, 8);
+
+        // Create user and student
+        const userId = createId();
+        const studentId = createId();
+
+        // Insert user with lowercase email
+        await db.insert(users).values({
+          id: userId,
+          email, // This is now lowercase
+          passwordHash,
+          fullName,
+          contactNumber,
+          role: "student",
+          createdAt: new Date()
+        });
+
+        // Insert student with static values
+        await db.insert(students).values({
+          id: studentId,
+          userId,
+          rollNumber,
+          pid,
+          currentSemester: 6,
+          currentYear: "TE",
+          division: "B",
+          academicYear: "2024-2025"
+        });
+
+        results.success++;
+      } catch (error: any) {
+        results.failed++;
+        results.errors.push({
+          row: i,
+          message: `Error: ${error.message}`
+        });
+      }
+    }
+
+    return c.json({
+      success: true,
+      message: "CSV processing completed",
+      results
+    });
+  } catch (error: any) {
+    console.error("CSV processing error:", error);
+    return c.json({
+      success: false,
+      message: "An error occurred during CSV processing",
+      error: error.message
+    }, 500);
+  }
+});
+
+
+// Create a teacher
+app.post("/auth/register-teacher", async (c) => {
+  const db = drizzle(c.env.DB);
+  const { email, fullName, contactNumber, department, passwordHash } = await c.req.json();
+
+  // Validate required fields
+  if (!email || !fullName || !department) {
+    return c.json({
+      success: false,
+      message: "Email, full name, and department are required"
+    }, 400);
+  }
+
+  try {
+    // Check if email already exists
+    const existingUser = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, email.toLowerCase()))
+      .limit(1);
+
+    if (existingUser.length > 0) {
+      return c.json({
+        success: false,
+        message: "Email already registered"
+      }, 409);
+    }
+
+    // Create user and teacher with transaction
+    const userId = createId();
+    const teacherId = createId();
+
+    // Insert user
+    await db.insert(users).values({
+      id: userId,
+      email: email.toLowerCase(),
+      passwordHash: passwordHash || contactNumber?.substring(0, 8) || "password123", // Default password
+      fullName,
+      contactNumber,
+      role: "teacher",
+      createdAt: new Date()
+    });
+
+    // Insert teacher
+    await db.insert(teachers).values({
+      id: teacherId,
+      userId,
+      department
+    });
+
+    return c.json({
+      success: true,
+      message: "Teacher registered successfully",
+      data: {
+        userId,
+        teacherId,
+        email,
+        fullName,
+        department
+      }
+    });
+  } catch (error: any) {
+    console.error("Registration error:", error);
+    return c.json({
+      success: false,
+      message: "An error occurred during registration",
+      error: error.message
+    }, 500);
+  }
+});
+
+
+// Create a subject
+app.post("/subjects", async (c) => {
+  const db = drizzle(c.env.DB);
+  const { subjectCode, subjectName, semester, year } = await c.req.json();
+
+  // Validate required fields
+  if (!subjectCode || !subjectName || !semester || !year) {
+    return c.json({
+      success: false,
+      message: "Subject code, name, semester, and year are required"
+    }, 400);
+  }
+
+  try {
+    // Check if subject already exists
+    const existingSubject = await db
+      .select()
+      .from(subjects)
+      .where(eq(subjects.subjectCode, subjectCode))
+      .limit(1);
+
+    if (existingSubject.length > 0) {
+      return c.json({
+        success: false,
+        message: "Subject with this code already exists"
+      }, 409);
+    }
+
+    // Create the subject
+    const [newSubject] = await db.insert(subjects).values({
+      subjectCode,
+      subjectName,
+      semester: typeof semester === 'string' ? parseInt(semester) : semester,
+      year
+    }).returning();
+
+    return c.json({
+      success: true,
+      message: "Subject created successfully",
+      data: newSubject
+    });
+  } catch (error: any) {
+    console.error("Error creating subject:", error);
+    return c.json({
+      success: false,
+      message: "Failed to create subject",
+      error: error.message
+    }, 500);
+  }
+});
+
+
+// Create teacher-subject association
+app.post("/teacher-subjects", async (c) => {
+  const db = drizzle(c.env.DB);
+  const { teacherId, subjectId, division, academicYear } = await c.req.json();
+
+  // Validate required fields
+  if (!teacherId || !subjectId || !division || !academicYear) {
+    return c.json({
+      success: false,
+      message: "Teacher ID, subject ID, division, and academic year are required"
+    }, 400);
+  }
+
+  try {
+    // Check if teacher exists
+    const teacher = await db
+      .select()
+      .from(teachers)
+      .where(eq(teachers.id, teacherId))
+      .limit(1);
+
+    if (!teacher.length) {
+      return c.json({
+        success: false,
+        message: "Teacher not found"
+      }, 404);
+    }
+
+    // Check if subject exists
+    const subject = await db
+      .select()
+      .from(subjects)
+      .where(eq(subjects.id, subjectId))
+      .limit(1);
+
+    if (!subject.length) {
+      return c.json({
+        success: false,
+        message: "Subject not found"
+      }, 404);
+    }
+
+    // Check if association already exists
+    const existingAssociation = await db
+      .select()
+      .from(teacherSubjects)
+      .where(
+        and(
+          eq(teacherSubjects.teacherId, teacherId),
+          eq(teacherSubjects.subjectId, subjectId),
+          eq(teacherSubjects.division, division),
+          eq(teacherSubjects.academicYear, academicYear)
+        )
+      )
+      .limit(1);
+
+    if (existingAssociation.length > 0) {
+      return c.json({
+        success: false,
+        message: "This teacher-subject association already exists"
+      }, 409);
+    }
+
+    // Create the association
+    const [newAssociation] = await db.insert(teacherSubjects).values({
+      teacherId,
+      subjectId,
+      division,
+      academicYear
+    }).returning();
+
+    return c.json({
+      success: true,
+      message: "Teacher-subject association created successfully",
+      data: newAssociation
+    });
+  } catch (error: any) {
+    console.error("Error creating teacher-subject association:", error);
+    return c.json({
+      success: false,
+      message: "Failed to create teacher-subject association",
+      error: error.message
+    }, 500);
+  }
+});
+
+
 
 export default app;

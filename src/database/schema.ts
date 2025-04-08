@@ -19,7 +19,7 @@ export const students = sqliteTable("students", {
   userId: text("user_id")
     .notNull()
     .references(() => users.id),
-  rollNumber: text("roll_number").notNull().unique(),
+  rollNumber: text("roll_number").notNull(),
   pid: text("pid").notNull().unique(),
   currentSemester: integer("current_semester").notNull(),
   currentYear: text("current_year").notNull(), // 'FE' | 'SE' | 'TE' | 'BE'
