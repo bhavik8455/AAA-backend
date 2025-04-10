@@ -204,8 +204,8 @@ app.post("/teacher/addTask", async (c) => {
 
   try {
     // Validate required fields
-    if (!body.teacherSubjectId || !body.semester || !body.taskType || 
-        !body.title || !body.dueDate || !body.totalMarks || !body.division) {
+    if (!body.teacherSubjectId || !body.semester || !body.taskType ||
+      !body.title || !body.dueDate || !body.totalMarks || !body.division) {
       return c.json({
         success: false,
         message: "Missing required fields"
@@ -246,8 +246,8 @@ app.post("/teacher/addTask", async (c) => {
     // Process students in batches
     for (let i = 0; i < studentsInClass.length; i += BATCH_SIZE) {
       const batch = studentsInClass.slice(i, i + BATCH_SIZE);
-      console.log(`Processing batch ${i/BATCH_SIZE + 1} with ${batch.length} students`);
-      
+      console.log(`Processing batch ${i / BATCH_SIZE + 1} with ${batch.length} students`);
+
       // Process each student individually to be extra safe
       for (const student of batch) {
         await db.insert(submissions).values({
@@ -1042,6 +1042,66 @@ app.post("/teacher-subjects", async (c) => {
     }, 500);
   }
 });
+
+
+// Delete a task by ID
+app.delete("/teacher/task/:taskId", async (c) => {
+  const db = drizzle(c.env.DB);
+  const taskId = c.req.param("taskId");
+
+  try {
+    // First check if the task exists
+    const task = await db
+      .select()
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+      .limit(1);
+
+    if (!task.length) {
+      return c.json({
+        success: false,
+        message: "Task not found"
+      }, 404);
+    }
+
+    // Delete related submissions and marks first (to maintain referential integrity)
+    // 1. Get all submissions for this task
+    const submissions_list = await db
+      .select()
+      .from(submissions)
+      .where(eq(submissions.taskId, taskId));
+
+    // 2. Delete marks for each submission
+    for (const submission of submissions_list) {
+      await db
+        .delete(marks)
+        .where(eq(marks.submissionId, submission.id));
+    }
+
+    // 3. Delete all submissions for this task
+    await db
+      .delete(submissions)
+      .where(eq(submissions.taskId, taskId));
+
+    // 4. Finally delete the task
+    await db
+      .delete(tasks)
+      .where(eq(tasks.id, taskId));
+
+    return c.json({
+      success: true,
+      message: "Task and all related data deleted successfully"
+    });
+  } catch (error: any) {
+    console.error("Error deleting task:", error);
+    return c.json({
+      success: false,
+      message: "Failed to delete task",
+      error: error.message
+    }, 500);
+  }
+});
+
 
 
 
