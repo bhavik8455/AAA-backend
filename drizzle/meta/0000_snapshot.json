@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "acc55868-b2cd-449f-8069-6b1c829a25ff",
+  "id": "c01196fd-3c6a-4e27-be1d-2d2387cf552c",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "marks": {
@@ -160,13 +160,6 @@
         }
       },
       "indexes": {
-        "students_roll_number_unique": {
-          "name": "students_roll_number_unique",
-          "columns": [
-            "roll_number"
-          ],
-          "isUnique": true
-        },
         "students_pid_unique": {
           "name": "students_pid_unique",
           "columns": [

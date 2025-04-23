@@ -23,7 +23,6 @@ CREATE TABLE `students` (
 	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `students_roll_number_unique` ON `students` (`roll_number`);--> statement-breakpoint
 CREATE UNIQUE INDEX `students_pid_unique` ON `students` (`pid`);--> statement-breakpoint
 CREATE TABLE `subjects` (
 	`id` text PRIMARY KEY NOT NULL,
